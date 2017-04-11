@@ -22,7 +22,7 @@ or 2) add `hist` as an alias.
 
 ### Super Installation
 
-Add `hist import` to your `.profile`:
+Add `hist import` to your `.profile` (assuming `hist` is in your path):
 
     $ echo hist import >> ~/.profile
 
