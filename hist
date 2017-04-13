@@ -81,7 +81,7 @@ cmd_import() {
         INSERT INTO variables(key, value)
             SELECT 'items', COUNT(*) FROM history;
         CREATE TEMPORARY TABLE history_import (line TEXT);
-.separator \`
+.separator $(echo -e "\x01")
 .import ${SRC} history_import
         INSERT OR IGNORE INTO history(command, timestamp)
             SELECT line, NULL FROM history_import;
