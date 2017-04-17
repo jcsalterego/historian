@@ -38,7 +38,7 @@ This will import your .bash_history every time you launch a new shell.
 
 Show config:
 
-    version:      0.0.1
+    version:      0.0.2
     bash_history: /Users/jerry/.bash_history
     db:           /Users/jerry/.historian.db
     sqlite3:      /opt/local/bin/sqlite3
