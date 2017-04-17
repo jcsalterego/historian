@@ -144,6 +144,7 @@ _import_zsh_extended_history() {
         SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    [ -n "$tmpdir" ] && rm -rf $tmpdir
 }
 
 cmd_log() {
