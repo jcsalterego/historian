@@ -20,6 +20,12 @@ or 2) add `hist` as an alias.
 
     alias hist="/Users/jerry/historian/hist"
 
+### Getting Started
+
+Import your `~/.bash_history`
+
+    $ hist import
+
 ### Super Installation
 
 Add `hist import` to your `.profile` (assuming `hist` is in your path):
@@ -27,12 +33,6 @@ Add `hist import` to your `.profile` (assuming `hist` is in your path):
     $ echo hist import >> ~/.profile
 
 This will import your .bash_history every time you launch a new shell.
-
-### Getting Started
-
-Import your `~/.bash_history`
-
-    $ hist import
 
 ### Usage
 
