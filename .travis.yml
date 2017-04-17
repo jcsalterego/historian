@@ -1,1 +1,2 @@
 script: make test
+language: c
