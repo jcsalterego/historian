@@ -45,6 +45,17 @@ sandbox_hist() {
     return $?
 }
 
+sandbox_hist_with_output() {
+    if [ -z "$sandbox" ]; then
+        "\$sandbox required. Aborting"
+        exit 1
+    fi
+    HOME=$sandbox \
+        $HIST $@
+    rv=$?
+    return $?
+}
+
 add_success() {
     let success_count=success_count+1
 }
