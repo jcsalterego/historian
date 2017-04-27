@@ -74,6 +74,10 @@ cmd_import() {
     preflight_check;
     ensure_db_exists;
 
+    sanitized_src=$(mktemp)
+    cat ${HISTORIAN_SRC} \
+        > "${sanitized_src}" \
+    ;
     ( cat <<SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
@@ -81,7 +85,7 @@ cmd_import() {
             SELECT 'items', COUNT(*) FROM history;
         CREATE TEMPORARY TABLE history_import (line TEXT);
 .separator $(echo -e "\x01")
-.import ${HISTORIAN_SRC} history_import
+.import ${sanitized_src} history_import
         INSERT OR IGNORE INTO history(command, timestamp)
             SELECT line, NULL FROM history_import;
         UPDATE variables
@@ -89,6 +93,7 @@ cmd_import() {
         SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    rm -f ${sanitized_src};
 }
 
 cmd_log() {
