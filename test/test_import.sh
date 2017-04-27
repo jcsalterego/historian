@@ -74,6 +74,9 @@ EOF
 
     sandbox_hist import
 
-    row_count=$(sandbox_sql 'SELECT COUNT(*) FROM history;')
-    assert_equal 3 "${row_count}" "rows imported by simple bash_history"
+    local tmp=$(mktemp)
+    sandbox_sql 'SELECT command FROM history ORDER BY id ASC;' > $tmp
+    diff $tmp $sandbox/.bash_history
+    assert_equal 0 $?
+    rm -f $tmp
 }
