@@ -5,6 +5,7 @@ HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
 MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
+MAGIC_ENUM_QUOTE=1
 
 usage() {
     echo "Usage: hist <subcommand>" >&2
@@ -84,6 +85,7 @@ cmd_import() {
 
     sanitized_src=$(mktemp)
     cat ${HISTORIAN_SRC} \
+        | sed -e 's/"/'$(get_magic ${MAGIC_ENUM_QUOTE})'/g' \
         > "${sanitized_src}" \
     ;
     ( cat <<SQL
@@ -94,6 +96,8 @@ cmd_import() {
         CREATE TEMPORARY TABLE history_import (line TEXT);
 .separator $(echo -e "\x01")
 .import ${sanitized_src} history_import
+        UPDATE history_import
+            SET line = REPLACE(line, '$(get_magic ${MAGIC_ENUM_QUOTE})', '"');
         INSERT OR IGNORE INTO history(command, timestamp)
             SELECT line, NULL FROM history_import;
         UPDATE variables

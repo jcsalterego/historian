@@ -64,3 +64,16 @@ EOF
     row_count=$(sandbox_sql 'SELECT COUNT(*) FROM history;')
     assert_equal 3 "${row_count}" "rows imported by simple bash_history should not change"
 }
+
+htest_import_imbalanced_quotes() {
+    cat >> $sandbox/.bash_history <<EOF
+foo
+"bar
+baz"
+EOF
+
+    sandbox_hist import
+
+    row_count=$(sandbox_sql 'SELECT COUNT(*) FROM history;')
+    assert_equal 3 "${row_count}" "rows imported by simple bash_history"
+}
