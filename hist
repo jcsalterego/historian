@@ -140,6 +140,7 @@ cmd_search_slash() {
 _search() {
     local args=$@
     ( cat <<SQL
+.width 5 75
 .separator "\\n\\t"
         SELECT id, command
         FROM history
