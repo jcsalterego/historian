@@ -4,6 +4,7 @@ VERSION="0.0.2"
 HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
+MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
 
 usage() {
     echo "Usage: hist <subcommand>" >&2
@@ -42,6 +43,13 @@ ensure_db_exists() {
             history_search USING fts4(id, history, command);
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+}
+
+get_magic() {
+    local idx=$1
+    let offset_idx=idx+11
+    suffix=$(printf "%02d" ${offset_idx})
+    echo -n "${MAGIC}$(echo -ne "\x${suffix}")"
 }
 
 fail_unless_db_exists() {
