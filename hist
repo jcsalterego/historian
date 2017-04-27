@@ -4,6 +4,8 @@ VERSION="0.0.2"
 HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
+MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
+MAGIC_ENUM_QUOTE=1
 
 usage() {
     echo "Usage: hist <subcommand>" >&2
@@ -44,6 +46,13 @@ SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
 
+get_magic() {
+    local idx=$1
+    let offset_idx=idx+11
+    suffix=$(printf "%02d" ${offset_idx})
+    echo -n "${MAGIC}$(echo -ne "\x${suffix}")"
+}
+
 fail_unless_db_exists() {
     if [ ! -f "${HISTORIAN_DB}" ]; then
         echo "db (${HISTORIAN_DB}) doesn't exist. Aborting";
@@ -74,6 +83,11 @@ cmd_import() {
     preflight_check;
     ensure_db_exists;
 
+    sanitized_src=$(mktemp)
+    cat ${HISTORIAN_SRC} \
+        | sed -e 's/"/'$(get_magic ${MAGIC_ENUM_QUOTE})'/g' \
+        > "${sanitized_src}" \
+    ;
     ( cat <<SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
@@ -81,7 +95,9 @@ cmd_import() {
             SELECT 'items', COUNT(*) FROM history;
         CREATE TEMPORARY TABLE history_import (line TEXT);
 .separator $(echo -e "\x01")
-.import ${HISTORIAN_SRC} history_import
+.import ${sanitized_src} history_import
+        UPDATE history_import
+            SET line = REPLACE(line, '$(get_magic ${MAGIC_ENUM_QUOTE})', '"');
         INSERT OR IGNORE INTO history(command, timestamp)
             SELECT line, NULL FROM history_import;
         UPDATE variables
@@ -89,6 +105,7 @@ cmd_import() {
         SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    rm -f ${sanitized_src};
 }
 
 cmd_log() {

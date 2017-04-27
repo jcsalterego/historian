@@ -64,3 +64,21 @@ EOF
     row_count=$(sandbox_sql 'SELECT COUNT(*) FROM history;')
     assert_equal 3 "${row_count}" "rows imported by simple bash_history should not change"
 }
+
+htest_import_imbalanced_quotes() {
+    cat >> $sandbox/.bash_history <<EOF
+foo
+"bar
+baz"
+"""""""
+qu" x "lol "
+EOF
+
+    sandbox_hist import
+
+    local tmp=$(mktemp)
+    sandbox_sql 'SELECT command FROM history ORDER BY id ASC;' > $tmp
+    diff $tmp $sandbox/.bash_history
+    assert_equal 0 $?
+    rm -f $tmp
+}
