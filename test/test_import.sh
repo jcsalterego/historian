@@ -70,6 +70,8 @@ htest_import_imbalanced_quotes() {
 foo
 "bar
 baz"
+"""""""
+qu" x "lol "
 EOF
 
     sandbox_hist import
