@@ -7,6 +7,13 @@ HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
 MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
 MAGIC_ENUM_QUOTE=1
 
+SEPARATOR=$(echo -e "\x01")
+
+# Other ENV parameters:
+#
+# - ZSH_EXTENDED_HISTORY: if set, parses HISTORIAN_SRC using zsh's
+#   EXTENDED_HISTORY format
+
 usage() {
     echo "Usage: hist <subcommand>" >&2
     echo "subcommands:" >&2
@@ -88,13 +95,21 @@ cmd_import() {
         | sed -e 's/"/'$(get_magic ${MAGIC_ENUM_QUOTE})'/g' \
         > "${sanitized_src}" \
     ;
+    if [ -n "${ZSH_EXTENDED_HISTORY}" ]; then
+        _import_zsh_extended_history;
+    else
+        _import_default;
+    fi
+}
+
+_import_default() {
     ( cat <<SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
         INSERT INTO variables(key, value)
             SELECT 'items', COUNT(*) FROM history;
         CREATE TEMPORARY TABLE history_import (line TEXT);
-.separator $(echo -e "\x01")
+.separator ${SEPARATOR}
 .import ${sanitized_src} history_import
         UPDATE history_import
             SET line = REPLACE(line, '$(get_magic ${MAGIC_ENUM_QUOTE})', '"');
@@ -106,6 +121,30 @@ cmd_import() {
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
     rm -f ${sanitized_src};
+}
+
+# http://zsh.sourceforge.net/Doc/Release/Options.html#History
+_import_zsh_extended_history() {
+    local tmpdir=$(mktemp -d)
+    tmp_src=${tmpdir}/$(basename $HISTORIAN_SRC)
+    sed -e 's/^: \([0-9][0-9]*\):\([0-9][0-9]*\);/\1'${SEPARATOR}'/g' ${HISTORIAN_SRC} \
+        > ${tmp_src}
+    ( cat <<SQL
+        CREATE TEMPORARY TABLE variables
+            (key TEXT, value INTEGER);
+        INSERT INTO variables(key, value)
+            SELECT 'items', COUNT(*) FROM history;
+        CREATE TEMPORARY TABLE history_import (timestamp INTEGER, command TEXT);
+.separator ${SEPARATOR}
+.import ${tmp_src} history_import
+        INSERT OR IGNORE INTO history(timestamp, command)
+            SELECT timestamp, command FROM history_import;
+        UPDATE variables
+            SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
+        SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
+SQL
+    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    [ -n "$tmpdir" ] && rm -rf $tmpdir
 }
 
 cmd_log() {
