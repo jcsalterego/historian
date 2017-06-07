@@ -85,20 +85,19 @@ EOF
 }
 
 htest_import_zsh_extended_history_parses_correctly() {
-    cp "$PWD"/sample.zsh_history "$sandbox"/.bash_history
-    cp "$PWD"/sample.zsh_history.expected_output "$sandbox"/expected_commands.psv
+    cp "$PWD"/sample.zsh_history "$sandbox"/.zsh_history
+    expected_output=$PWD/sample.zsh_history.expected_output
 
-    ZSH_EXTENDED_HISTORY=1 \
-        sandbox_hist import
+    sandbox_hist_with_output import
 
-    sandbox_sql > "$sandbox"/actual_commands.psv "
+    sandbox_sql > "$sandbox"/actual_output.psv "
     SELECT command_timestamp, command
     FROM history
     ORDER by command_timestamp;
     "
 
-    diff "$sandbox"/expected_commands.psv "$sandbox"/actual_commands.psv
-    assert_equal 0 $? "rows imported with ZSH_EXTENDED_HISTORY set should match"
+    diff "$expected_output" "$sandbox"/actual_output.psv
+    assert_equal 0 $? "rows imported with from zsh_history set should match"
 }
 
 htest_import_historianrc_variables_get_imported() {

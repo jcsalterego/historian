@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
 
 VERSION="0.0.2"
-HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
+HISTORIAN_BASH=${HISTORIAN_BASH-"${HOME}/.bash_history"} \
+HISTORIAN_ZSH=${HISTORIAN_ZSH-"${HOME}/.zsh_history"} \
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
 HISTORIAN_BASH_WITH_TIMESTAMPS=${HISTORIAN_BASH_WITH_TIMESTAMPS-0}
 HISTORIAN_RC=${HISTORIAN_RC-"${HOME}/.historianrc"} \
-
-# Other ENV parameters:
-#
-# - ZSH_EXTENDED_HISTORY: if set, parses HISTORIAN_SRC using zsh's
-#   EXTENDED_HISTORY format
 
 usage() {
     cat >&2 <<- EOF
@@ -143,7 +139,8 @@ fail_unless_db_exists() {
 cmd_config() {
     cat <<EOF
 version:        ${VERSION}
-source_history:   ${HISTORIAN_SRC}
+bash_history:   ${HISTORIAN_BASH}
+zsh_history:    ${HISTORIAN_ZSH}
 db:             ${HISTORIAN_DB}
 sqlite3:        ${HISTORIAN_SQLITE3}
 EOF
@@ -284,14 +281,16 @@ cmd_import() {
     cleanup() { rm -rf "$tmp"; }
     trap cleanup EXIT
 
-    if [[ -n $ZSH_EXTENDED_HISTORY ]]; then
-        csv_from_extended_zsh_history \
-            < "${HISTORIAN_SRC}" \
-            > "${history_csv_path}"
-    else
+    if [[ -f $HISTORIAN_BASH ]]; then
         csv_from_bash_history \
-            < "${HISTORIAN_SRC}" \
-            > "${history_csv_path}"
+            < "${HISTORIAN_BASH}" \
+            >> "${history_csv_path}"
+    fi
+
+    if [[ -f $HISTORIAN_ZSH ]]; then
+        csv_from_extended_zsh_history \
+            < "${HISTORIAN_ZSH}" \
+            >> "${history_csv_path}"
     fi
 
     insert_import_metadata > "$metadata_sql"
