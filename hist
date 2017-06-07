@@ -363,9 +363,19 @@ cmd_search() {
         done
     }
 
-    historian_sqlite <<SQL
-.separator "\\n\\t"
-        SELECT id, command
+    format_results() {
+        # Ensure special characters like \n and \t are interpreted for display.
+        echo -e "$(cat)"
+    }
+
+    # Format the output in SQL for performance reasons.
+    # Doing this in bash with a "read" loop will slow this down a lot.
+    historian_sqlite <<- SQL | format_results
+.mode list
+        SELECT
+            'id:' || id
+            || ' at ' || command_timestamp
+            || '\n\t' || replace(command, '\n', '\n\t')
         FROM history
         WHERE 1
         $(search_terms)
