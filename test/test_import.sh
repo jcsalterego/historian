@@ -118,3 +118,8 @@ EOF
     diff "$sandbox"/expected_output.psv "$sandbox"/actual_output.psv
     assert_equal 0 $? "variables from .historianrc set should match"
 }
+
+htest_import_fails_with_no_history_files() {
+    sandbox_hist import
+    assert_equal 2 $? "hist import should fail if no history input is found"
+}

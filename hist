@@ -293,6 +293,13 @@ cmd_import() {
             >> "${history_csv_path}"
     fi
 
+    if [[ ! -f ${history_csv_path} ]]; then
+        echo "No shell history files found at any of the following locations:"
+        echo "- HISTORIAN_BASH: $HISTORIAN_BASH"
+        echo "- HISTORIAN_ZSH:  $HISTORIAN_ZSH"
+        exit 2
+    fi
+
     insert_import_metadata > "$metadata_sql"
 
     cat > "$import_sql" <<- SQL
