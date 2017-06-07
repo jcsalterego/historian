@@ -87,7 +87,6 @@ cmd_config() {
 }
 
 cmd_count() {
-    local args=$@
     preflight_check;
     ensure_db_exists;
 
@@ -97,7 +96,6 @@ SQL
 }
 
 cmd_import() {
-    local args=$@
     preflight_check;
     ensure_db_exists;
 
@@ -157,7 +155,6 @@ SQL
 }
 
 cmd_log() {
-    local args=$@
     preflight_check;
     fail_unless_db_exists;
 
@@ -189,7 +186,6 @@ SQL
 }
 
 cmd_shell() {
-    local args=$@
     preflight_check;
     fail_unless_db_exists;
 
