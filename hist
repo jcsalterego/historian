@@ -26,6 +26,10 @@ usage() {
     echo "  version          show the version" >&2
 }
 
+sql_quote_term() {
+    echo "${*//\'/\'\'}"
+}
+
 preflight_check() {
     if [ -z "$HOME" ]; then
         echo "need \$HOME" >&2
@@ -163,12 +167,19 @@ cmd_search() {
     preflight_check;
     ensure_db_exists;
 
-    local args=$@
+    local -r args=("$@")
+    search_terms() {
+        for term in "${args[@]}"; do
+            echo "AND command LIKE '%$(sql_quote_term "$term")%'"
+        done
+    }
+
     ( cat <<SQL
 .separator "\\n\\t"
         SELECT id, command
         FROM history
-        WHERE command LIKE '%${args}%'
+        WHERE 1
+        $(search_terms)
         ORDER BY id DESC;
 SQL
     ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
