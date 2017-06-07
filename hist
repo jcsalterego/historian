@@ -5,6 +5,7 @@ HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
 HISTORIAN_BASH_WITH_TIMESTAMPS=${HISTORIAN_BASH_WITH_TIMESTAMPS-0}
+HISTORIAN_RC=${HISTORIAN_RC-"${HOME}/.historianrc"} \
 
 # Other ENV parameters:
 #
@@ -48,13 +49,47 @@ preflight_check() {
     fi
 }
 
+export_historianrc_variables() {
+    # Get custom-set metadata variables with some variable
+    # enumeration hackery from .historianrc (interpreted as a bash script).
+    #
+    # Execute in subshell to avoid interference with the main script.
+    (
+        # This is kind of like a portable env -0 with diff as env -0 is GNU-only.
+        compgen -v > "$tmp"/vars1
+        source "$HISTORIAN_RC"
+        compgen -v > "$tmp"/vars2
+
+        while IFS= read -r var; do
+            echo -ne "${var}=${!var}"'\0'
+        done < <(comm -13 "$tmp/vars1" "$tmp/vars2")
+    )
+    return $?
+}
+
 insert_import_metadata() {
     # NB. Metadata set here are passed to the DB as-is.
     # Be careful with quoting.
     #
+    # In contrast, variables set in historianrc are
+    # passed in fully quoted.
+    #
     metadata=(
         imported_at current_timestamp
     )
+
+    if [[ -f $HISTORIAN_RC ]]; then
+        local -r vars_path=$tmp/historianrc.vars
+
+        if ! export_historianrc_variables > "$vars_path"; then
+            error "Error evaluating historianrc at ${HISTORIAN_RC}: Exiting."
+            exit 10
+        fi
+
+        while IFS='=' read -r -d '' key val; do
+            metadata+=("$key" "'$(sql_quote_term "$val")'")
+        done < "$vars_path"
+    fi
 
     echo "INSERT into metadata(metadata_id, key, value)"
     let end=${#metadata[@]}-1

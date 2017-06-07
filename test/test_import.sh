@@ -100,3 +100,22 @@ htest_import_zsh_extended_history_parses_correctly() {
     diff "$sandbox"/expected_commands.psv "$sandbox"/actual_commands.psv
     assert_equal 0 $? "rows imported with ZSH_EXTENDED_HISTORY set should match"
 }
+
+htest_import_historianrc_variables_get_imported() {
+    cp "$PWD"/sample.historianrc "$sandbox"/.historianrc
+    seq 15 > "$sandbox"/.bash_history
+    sandbox_hist import
+    cat > "$sandbox"/expected_output.psv <<EOF
+1|commands_imported|15
+1|fake_hostname|the-moon
+1|interpreted_var|1 2 3 4 5 6 7 8 9 10
+EOF
+    sandbox_sql > "$sandbox"/actual_output.psv "
+    SELECT metadata_id, key, value
+    FROM metadata
+    WHERE key <> 'imported_at'
+    ORDER by metadata_id, key;
+    "
+    diff "$sandbox"/expected_output.psv "$sandbox"/actual_output.psv
+    assert_equal 0 $? "variables from .historianrc set should match"
+}
