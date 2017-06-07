@@ -36,7 +36,7 @@ foo \\\\bar\\\\baz
 foo ; bar ; baz
 EOF
 
-    sandbox_hist import
+    sandbox_hist_with_output import
 
     row_count=$(sandbox_sql 'SELECT COUNT(*) FROM history;')
     assert_equal 4 "${row_count}" "rows imported by simple bash_history"
@@ -90,8 +90,11 @@ htest_import_zsh_extended_history_parses_correctly() {
     ZSH_EXTENDED_HISTORY=1 \
         sandbox_hist import
 
-    sandbox_sql "SELECT timestamp, command FROM history;" \
-        > "$sandbox"/actual_commands.psv
+    sandbox_sql > "$sandbox"/actual_commands.psv "
+    SELECT command_timestamp, command
+    FROM history
+    ORDER by command_timestamp;
+    "
 
     diff "$sandbox"/expected_commands.psv "$sandbox"/actual_commands.psv
     assert_equal 0 $? "rows imported with ZSH_EXTENDED_HISTORY set should match"
