@@ -1,0 +1,32 @@
+1492369835|hist import
+1492369844|hist /hist import
+1492369861|hist shell
+1492369868|hist version
+1492369908|hist /hist | wc -l
+1492370096|history
+1492370103|man history
+1492370245|history-stat
+1492370604|vi $HISTFILE
+1492370674|tail $HISTFILEfoo
+1496750990|{ printf ' }
+
+
+
+''
+'
+
+a
+c
+
+}
+1496753145|\\
+1496761622|\\\
+\\\
+\\
+1496761636|{
+\\
+\\\
+\\
+'
+'
+}

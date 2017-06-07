@@ -84,37 +84,15 @@ EOF
 }
 
 htest_import_zsh_extended_history_parses_correctly() {
-    cat >> $sandbox/.bash_history <<EOF
-: 1492369835:0;hist import
-: 1492369844:0;hist /hist import
-: 1492369861:4;hist shell
-: 1492369868:0;hist version
-: 1492369908:0;hist /hist | wc -l
-: 1492370096:30;history
-: 1492370103:0;man history
-: 1492370245:0;history-stat
-: 1492370604:50;vi $HISTFILE
-: 1492370674:0;tail $HISTFILEfoo
-EOF
-
-    cat >> $sandbox/expected_commands.psv <<EOF
-1492369835|hist import
-1492369844|hist /hist import
-1492369861|hist shell
-1492369868|hist version
-1492369908|hist /hist | wc -l
-1492370096|history
-1492370103|man history
-1492370245|history-stat
-1492370604|vi $HISTFILE
-1492370674|tail $HISTFILEfoo
-EOF
+    cp "$PWD"/sample.zsh_history "$sandbox"/.bash_history
+    cp "$PWD"/sample.zsh_history.expected_output "$sandbox"/expected_commands.psv
 
     ZSH_EXTENDED_HISTORY=1 \
         sandbox_hist import
 
     sandbox_sql "SELECT timestamp, command FROM history;" \
-        > $sandbox/actual_commands.psv;
-    diff $sandbox/expected_commands.psv $sandbox/actual_commands.psv;
+        > "$sandbox"/actual_commands.psv
+
+    diff "$sandbox"/expected_commands.psv "$sandbox"/actual_commands.psv
     assert_equal 0 $? "rows imported with ZSH_EXTENDED_HISTORY set should match"
 }
