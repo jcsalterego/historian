@@ -1,4 +1,4 @@
-#!/bin/bash
+#! /usr/bin/env bash
 
 VERSION="0.0.2"
 HISTORIAN_BASH=${HISTORIAN_BASH-"${HOME}/.bash_history"} \

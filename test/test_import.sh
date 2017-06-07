@@ -1,4 +1,4 @@
-#!/bin/bash
+#! /usr/bin/env bash
 typeset sandbox
 
 htest_import_simple() {

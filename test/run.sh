@@ -1,4 +1,4 @@
-#!/bin/bash
+#! /usr/bin/env bash
 
 # shellcheck source=_init.sh
 source "$(dirname "$0")/_init.sh"

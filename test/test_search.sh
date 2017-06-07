@@ -1,4 +1,4 @@
-#!/bin/bash
+#! /usr/bin/env bash
 typeset sandbox
 
 htest_search_length() {
