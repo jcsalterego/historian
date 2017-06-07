@@ -164,20 +164,6 @@ cmd_search() {
     ensure_db_exists;
 
     local args=$@
-    _search "$args"
-}
-
-cmd_search_slash() {
-    preflight_check;
-    ensure_db_exists;
-
-    local args=$@
-    term="$(echo "$args" | sed -e 's/^.//g')";
-    _search "$term"
-}
-
-_search() {
-    local args=$@
     ( cat <<SQL
 .separator "\\n\\t"
         SELECT id, command
@@ -202,36 +188,21 @@ cmd_version() {
 }
 
 main() {
-    local cmd=$1
+    local -r cmd=$1
     shift
     case $cmd in
-    config)
-        cmd_config $@
-        ;;
-    count)
-        cmd_count $@
-        ;;
-    import)
-        cmd_import $@
-        ;;
-    log)
-        cmd_log $@
-        ;;
-    search)
-        cmd_search $@
-        ;;
-    shell)
-        cmd_shell $@
-        ;;
-    version)
-        cmd_version $@
-        ;;
-    "")
+    "" | "-h" | "--help")
         usage
         ;;
+    /*)
+        # Strip trailing slash and proceed normally.
+        args=("${cmd:1}" $@)
+        cmd_search "${args[@]}"
+        ;;
     *)
-        if [ -n "$(echo "$cmd" | grep -E '^/')" ]; then
-            cmd_search_slash $cmd $@
+        subcommand=cmd_${cmd}
+        if typeset -rF "$subcommand"; then
+            "$subcommand" "$@"
         else
             usage
             exit 1
