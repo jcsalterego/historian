@@ -1,6 +1,6 @@
 #!/bin/bash
 
-HIST=$(dirname $0)/../hist
+HIST=$(dirname "$0")/../hist
 
 fail=false
 success_count=0
@@ -26,12 +26,12 @@ new_sandbox() {
 }
 
 sandbox_sql() {
-    if [ -z "$sandbox" ]; then
+    if [[ -z $sandbox ]]; then
         "\$sandbox required. Aborting"
         exit 1
     fi
 
-    echo "$@" | sqlite3 $sandbox/.historian.db
+    echo "$@" | sqlite3 "$sandbox"/.historian.db
 }
 
 sandbox_hist() {
@@ -39,9 +39,8 @@ sandbox_hist() {
         "\$sandbox required. Aborting"
         exit 1
     fi
-    HOME=$sandbox \
-        $HIST $@ >/dev/null 2>&1
-    rv=$?
+    HOME=$sandbox HISTORIAN_WITH_TIMESTAMPS=0 \
+        $HIST "$@" >/dev/null 2>&1
     return $?
 }
 
@@ -50,9 +49,8 @@ sandbox_hist_with_output() {
         "\$sandbox required. Aborting"
         exit 1
     fi
-    HOME=$sandbox \
-        $HIST $@
-    rv=$?
+    HOME=$sandbox HISTORIAN_WITH_TIMESTAMPS=0 \
+        $HIST "$@"
     return $?
 }
 
@@ -72,8 +70,8 @@ add_failure() {
 
 destroy_sandbox() {
     local sandbox=$1
-    if [ -n $sandbox ] && [ -n "$(echo $sandbox | grep /tmp)" ]; then
-        rm -rf $sandbox
+    if [[ -n $sandbox ]] && grep -q /tmp <<< "$sandbox"; then
+        rm -rf "$sandbox"
     else
         echo "Warning: not destroying sandbox: ${sandbox}" >&2
     fi
