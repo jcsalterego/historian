@@ -4,10 +4,6 @@ VERSION="0.0.2"
 HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
-MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
-MAGIC_ENUM_QUOTE=1
-
-SEPARATOR=$(echo -e "\x01")
 
 # Other ENV parameters:
 #
@@ -65,13 +61,6 @@ ensure_db_exists() {
 SQL
 }
 
-get_magic() {
-    local idx=$1
-    let offset_idx=idx+11
-    suffix=$(printf "%02d" ${offset_idx})
-    echo -n "${MAGIC}$(echo -ne "\x${suffix}")"
-}
-
 fail_unless_db_exists() {
     if [ ! -f "${HISTORIAN_DB}" ]; then
         echo "db (${HISTORIAN_DB}) doesn't exist. Aborting";
@@ -95,63 +84,173 @@ cmd_count() {
 SQL
 }
 
+
+csv_from_extended_zsh_history() {
+    # See: http://zsh.sourceforge.net/Doc/Release/Options.html#History
+    #
+    # NB. It is not 100% possible to disambiguate zsh lines from each other.
+    # This is because there can be any number of backslashes in the command history.
+    #
+    # However, in practice it is very unlikely for someone to construct
+    # lines like the following for zsh history.
+    # : 1234567890:0;whatever\
+    # : 1234567890:0;whatever\\\\
+    awk '
+    function print_row() {
+        cmd=""
+        for (i=1; i<length(lines); ++i) {
+          line = lines[i];
+          # Strip trailing backslash, add newline.
+          cmd = cmd substr(line, 1, length(line) - 1) RS
+        }
+        cmd = cmd lines[length(lines)]
+
+        # Escape quotes:
+        gsub("\"","\"\"", cmd);
+        # CSV row of form "timestamp,command"
+        print t ",\"" cmd "\"";
+    }
+
+    {
+        if(match($0, /^: ([1-9][0-9]{8,9}):[0-9]+;(.*)$/, a)) {
+            if (t && length(lines) > 0) { print_row(); }
+            delete lines;
+            t=a[1]; line=a[2];
+        } else {
+            line = $0;
+        }
+        lines[length(lines) + 1] = line;
+    }
+
+    END {
+        if (t && length(lines) > 0) { print_row(); }
+    }
+    '
+}
+
+csv_from_bash_history() {
+    # Test if the line looks like a timestamp (e.g. "#1234567890").
+    #
+    # Assume a timestamp is 9 or 10 digits long.
+    # So we only accept entries made between 1973 and 2286.
+    #
+    # This is heuristic by necessity so we do this to try
+    # minimize the number of false positives.
+    #
+    # This should be OK for even the earliest timestamped
+    # readline history file :)
+    #
+    # This is way too slow if implemented in bash so I opted
+    # to use awk instead.
+    # Could be faster still but this is kind of adequate.
+    #
+    # NB. bash has a syntax-check-only mode "bash -n".
+    # This would seem to be the correct option to use here
+    # but even it won't work for everything bash actually
+    # writes to history!
+    #
+    # For example, typing the following line in bash *will*
+    # write it to history, BUT it won't be syntactically valid.
+    #     { echo ' }
+    #
+    awk '
+    function print_row(){
+        # Escape quotes:
+        gsub("\"","\"\"", cmd);
+        # Remove spurious trailing newline
+        sub(/.$/, "", cmd);
+        # CSV row of form "timestamp,command"
+        print t ",\"" cmd "\"";
+    }
+
+    # Match timestamp lines
+    /^#[1-9][0-9]{8,9}$/ {
+        # Print a CSV row IF there is a timestamp associated with it.
+        if (t && cmd) { print_row() }
+        # Remove leading "#" from timestamp:
+        t=substr($0, 2);
+        # No commands seen for this timestamp.
+        cmd="";
+        # Skip to next line.
+        next;
+    }
+    {
+        # Keep adding lines to our command-seen-so-far
+        cmd=cmd $0 RS;
+    }
+    END {
+        # Print any final line if one exists
+        if (t && cmd) { print_row() }
+    }
+    '
+}
+
+csv_from_bash_history() {
+    awk '{
+    # Escape quotes:
+    gsub("\"","\"\"", $0);
+    # CSV row of form "timestamp,command" with zero timestamp.
+    # NB. The timestamp cannot be null for the unique constraints
+    # to work properly.
+    print "0,\"" $0 "\"";
+    }'
+}
+
 cmd_import() {
-    preflight_check;
-    ensure_db_exists;
+    preflight_check
+    ensure_db_exists
 
-    sanitized_src=$(mktemp)
-    cat ${HISTORIAN_SRC} \
-        | sed -e 's/"/'$(get_magic ${MAGIC_ENUM_QUOTE})'/g' \
-        > "${sanitized_src}" \
-    ;
-    if [ -n "${ZSH_EXTENDED_HISTORY}" ]; then
-        _import_zsh_extended_history;
+    readonly tmp=$(mktemp -d)
+    local -r history_csv_path=${tmp}/history.csv
+    local -r import_sql=${tmp}/import.sql
+
+    cleanup() { rm -rf "$tmp"; }
+    trap cleanup EXIT
+
+    if [[ -n $ZSH_EXTENDED_HISTORY ]]; then
+        csv_from_extended_zsh_history \
+            < "${HISTORIAN_SRC}" \
+            > "${history_csv_path}"
     else
-        _import_default;
+        csv_from_bash_history \
+            < "${HISTORIAN_SRC}" \
+            > "${history_csv_path}"
     fi
-}
 
-_import_default() {
-    historian_sqlite <<SQL
+    cat > "$import_sql" <<- SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
-        INSERT INTO variables(key, value)
-            SELECT 'items', COUNT(*) FROM history;
-        CREATE TEMPORARY TABLE history_import (line TEXT);
-.separator ${SEPARATOR}
-.import ${sanitized_src} history_import
-        UPDATE history_import
-            SET line = REPLACE(line, '$(get_magic ${MAGIC_ENUM_QUOTE})', '"');
-        INSERT OR IGNORE INTO history(command, timestamp)
-            SELECT line, NULL FROM history_import;
-        UPDATE variables
-            SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
-        SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
-SQL
-    rm -f ${sanitized_src};
-}
 
-# http://zsh.sourceforge.net/Doc/Release/Options.html#History
-_import_zsh_extended_history() {
-    local tmpdir=$(mktemp -d)
-    tmp_src=${tmpdir}/$(basename $HISTORIAN_SRC)
-    sed -e 's/^: \([0-9][0-9]*\):\([0-9][0-9]*\);/\1'${SEPARATOR}'/g' ${HISTORIAN_SRC} \
-        > ${tmp_src}
-    historian_sqlite <<SQL
-        CREATE TEMPORARY TABLE variables
-            (key TEXT, value INTEGER);
         INSERT INTO variables(key, value)
-            SELECT 'items', COUNT(*) FROM history;
-        CREATE TEMPORARY TABLE history_import (timestamp INTEGER, command TEXT);
-.separator ${SEPARATOR}
-.import ${tmp_src} history_import
-        INSERT OR IGNORE INTO history(timestamp, command)
-            SELECT timestamp, command FROM history_import;
-        UPDATE variables
-            SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
-        SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
+        SELECT 'items', COUNT(*)
+        FROM history;
+
+        CREATE TEMPORARY TABLE history_import (
+            command_timestamp INTEGER NOT NULL
+            ,command TEXT NOT NULL
+        );
+
+.mode csv
+.import "${history_csv_path}" history_import
+
+        INSERT OR IGNORE INTO history (timestamp, command)
+        SELECT
+            CASE WHEN command_timestamp = 0
+                THEN current_timestamp
+                ELSE command_timestamp -- datetime(command_timestamp, 'unixepoch')
+            END as command_timestamp
+            , command
+        FROM history_import;
+
+.mode ascii
+        SELECT 'Imported '
+            || (SELECT COUNT(*) - value FROM history)
+            || ' item(s).'
+            FROM variables WHERE key = 'items';
 SQL
-    [ -n "$tmpdir" ] && rm -rf $tmpdir
+
+    historian_sqlite < "$import_sql"
+    echo
 }
 
 cmd_log() {
@@ -221,4 +320,4 @@ main() {
     esac
 }
 
-main $@
+main "$@"
