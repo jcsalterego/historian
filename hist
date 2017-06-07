@@ -30,6 +30,12 @@ sql_quote_term() {
     echo "${*//\'/\'\'}"
 }
 
+historian_sqlite() {
+    # Attempt to normalize sqlite options in case there is
+    # some sqliterc imposing global defaults.
+    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}"
+}
+
 preflight_check() {
     if [ -z "$HOME" ]; then
         echo "need \$HOME" >&2
@@ -43,7 +49,7 @@ preflight_check() {
 }
 
 ensure_db_exists() {
-    ( cat <<SQL
+    historian_sqlite <<SQL
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY ASC,
             command TEXT NOT NULL,
@@ -54,7 +60,6 @@ ensure_db_exists() {
         CREATE VIRTUAL TABLE IF NOT EXISTS
             history_search USING fts4(id, history, command);
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
 
 get_magic() {
@@ -83,10 +88,9 @@ cmd_count() {
     preflight_check;
     ensure_db_exists;
 
-    ( cat <<SQL
+    historian_sqlite <<SQL
         SELECT COUNT(*) FROM history;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
 
 cmd_import() {
@@ -107,7 +111,7 @@ cmd_import() {
 }
 
 _import_default() {
-    ( cat <<SQL
+    historian_sqlite <<SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
         INSERT INTO variables(key, value)
@@ -123,7 +127,6 @@ _import_default() {
             SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
         SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
     rm -f ${sanitized_src};
 }
 
@@ -133,7 +136,7 @@ _import_zsh_extended_history() {
     tmp_src=${tmpdir}/$(basename $HISTORIAN_SRC)
     sed -e 's/^: \([0-9][0-9]*\):\([0-9][0-9]*\);/\1'${SEPARATOR}'/g' ${HISTORIAN_SRC} \
         > ${tmp_src}
-    ( cat <<SQL
+    historian_sqlite <<SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
         INSERT INTO variables(key, value)
@@ -147,7 +150,6 @@ _import_zsh_extended_history() {
             SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
         SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
     [ -n "$tmpdir" ] && rm -rf $tmpdir
 }
 
@@ -156,11 +158,10 @@ cmd_log() {
     preflight_check;
     fail_unless_db_exists;
 
-    ( cat <<SQL
+    historian_sqlite <<SQL | less
 .separator "\\n\\t"
         SELECT id, command FROM history ORDER BY id DESC;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" | less;
 }
 
 cmd_search() {
@@ -174,7 +175,7 @@ cmd_search() {
         done
     }
 
-    ( cat <<SQL
+    historian_sqlite <<SQL
 .separator "\\n\\t"
         SELECT id, command
         FROM history
@@ -182,7 +183,6 @@ cmd_search() {
         $(search_terms)
         ORDER BY id DESC;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
 
 cmd_shell() {
@@ -191,7 +191,7 @@ cmd_shell() {
     fail_unless_db_exists;
 
     echo "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" >&2
-    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    historian_sqlite
 }
 
 cmd_version() {
