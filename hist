@@ -13,15 +13,17 @@ HISTORIAN_RC=${HISTORIAN_RC-"${HOME}/.historianrc"} \
 #   EXTENDED_HISTORY format
 
 usage() {
-    echo "Usage: hist <subcommand>" >&2
-    echo "subcommands:" >&2
-    echo "  config           show config" >&2
-    echo "  count            count items in history" >&2
-    echo "  import           import to db" >&2
-    echo "  shell            launch sqlite3 shell with db" >&2
-    echo "  search <term>    search for <term>" >&2
-    echo "    /term          search for <term>" >&2
-    echo "  version          show the version" >&2
+    cat >&2 <<- EOF
+Usage: hist <subcommand>
+subcommands:
+config            show config
+count             count items in history
+import            import to db
+shell             launch sqlite3 shell with db
+search <terms...> search for one or more search terms
+    /term           search for <term>
+version           show the version
+EOF
 }
 
 sql_quote_term() {
@@ -139,10 +141,12 @@ fail_unless_db_exists() {
 }
 
 cmd_config() {
-    echo "version:        ${VERSION}"
-    echo "source_history: ${HISTORIAN_SRC}"
-    echo "db:             ${HISTORIAN_DB}"
-    echo "sqlite3:        ${HISTORIAN_SQLITE3}"
+    cat <<EOF
+version:        ${VERSION}
+source_history:   ${HISTORIAN_SRC}
+db:             ${HISTORIAN_DB}
+sqlite3:        ${HISTORIAN_SQLITE3}
+EOF
 }
 
 cmd_count() {
