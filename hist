@@ -4,6 +4,7 @@ VERSION="0.0.2"
 HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
+HISTORIAN_BASH_WITH_TIMESTAMPS=${HISTORIAN_BASH_WITH_TIMESTAMPS-0}
 
 # Other ENV parameters:
 #
@@ -47,17 +48,51 @@ preflight_check() {
     fi
 }
 
+insert_import_metadata() {
+    # NB. Metadata set here are passed to the DB as-is.
+    # Be careful with quoting.
+    #
+    metadata=(
+        imported_at current_timestamp
+    )
+
+    echo "INSERT into metadata(metadata_id, key, value)"
+    let end=${#metadata[@]}-1
+    for key_idx in $(seq 0 2 $end); do
+        metadata_key=$(sql_quote_term "${metadata[$key_idx]}")
+        # NB. assumed to be appropriately quoted for SQL.
+        metadata_value=${metadata[$key_idx+1]}
+
+        cat <<-EOF
+            $([[ $key_idx == 0 ]] || echo union all)
+            select
+                value as metadata_id,
+                '${metadata_key}' as key,
+                ${metadata_value} as value
+            from variables where key='metadata_id'
+EOF
+    done
+    echo ';'
+}
+
 ensure_db_exists() {
     historian_sqlite <<SQL
         CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY ASC,
-            command TEXT NOT NULL,
-            timestamp INTEGER
+            id INTEGER PRIMARY KEY ASC
+            ,metadata_id INTEGER NOT NULL
+            ,command TEXT NOT NULL
+            ,command_timestamp INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS metadata (
+            metadata_id INTEGER NOT NULL
+            ,key TEXT NOT NULL
+            ,value TEXT NOT NULL
+            ,primary key (metadata_id, key)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS
-            history_command_timestamp ON history(command);
+            history_command_timestamp ON history(command, command_timestamp);
         CREATE VIRTUAL TABLE IF NOT EXISTS
-            history_search USING fts4(id, history, command);
+            history_search USING fts4(id, history, command, command_timestamp);
 SQL
 }
 
@@ -185,16 +220,18 @@ csv_from_bash_history() {
     '
 }
 
-csv_from_bash_history() {
-    awk '{
-    # Escape quotes:
-    gsub("\"","\"\"", $0);
-    # CSV row of form "timestamp,command" with zero timestamp.
-    # NB. The timestamp cannot be null for the unique constraints
-    # to work properly.
-    print "0,\"" $0 "\"";
-    }'
-}
+if [[ $HISTORIAN_BASH_WITH_TIMESTAMPS = 0 ]]; then
+    csv_from_bash_history() {
+        awk '{
+        # Escape quotes:
+        gsub("\"","\"\"", $0);
+        # CSV row of form "timestamp,command" with zero timestamp.
+        # NB. The timestamp cannot be null for the unique constraints
+        # to work properly.
+        print "0,\"" $0 "\"";
+        }'
+    }
+fi
 
 cmd_import() {
     preflight_check
@@ -203,6 +240,7 @@ cmd_import() {
     readonly tmp=$(mktemp -d)
     local -r history_csv_path=${tmp}/history.csv
     local -r import_sql=${tmp}/import.sql
+    local -r metadata_sql=${tmp}/metadata.sql
 
     cleanup() { rm -rf "$tmp"; }
     trap cleanup EXIT
@@ -217,13 +255,18 @@ cmd_import() {
             > "${history_csv_path}"
     fi
 
+    insert_import_metadata > "$metadata_sql"
+
     cat > "$import_sql" <<- SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
 
         INSERT INTO variables(key, value)
         SELECT 'items', COUNT(*)
-        FROM history;
+        FROM history
+        UNION ALL
+        SELECT 'metadata_id', coalesce(max(metadata_id), 0) + 1
+        FROM metadata;
 
         CREATE TEMPORARY TABLE history_import (
             command_timestamp INTEGER NOT NULL
@@ -233,20 +276,31 @@ cmd_import() {
 .mode csv
 .import "${history_csv_path}" history_import
 
-        INSERT OR IGNORE INTO history (timestamp, command)
+        $(cat "$metadata_sql")
+
+        INSERT OR IGNORE INTO history (metadata_id, command_timestamp, command)
         SELECT
-            CASE WHEN command_timestamp = 0
-                THEN current_timestamp
-                ELSE command_timestamp -- datetime(command_timestamp, 'unixepoch')
-            END as command_timestamp
+            (select value from variables where key='metadata_id') as metadata_id
+            , command_timestamp
             , command
         FROM history_import;
 
+        insert into metadata (metadata_id, key, value)
+        select
+            (select value from variables where key='metadata_id') as metadata_id
+            , 'commands_imported' as key
+            , (SELECT COUNT(*) FROM history) - value as value
+        from variables where key='items';
+
 .mode ascii
-        SELECT 'Imported '
-            || (SELECT COUNT(*) - value FROM history)
-            || ' item(s).'
-            FROM variables WHERE key = 'items';
+        SELECT
+            'Imported ' || metadata.value || ' item(s).'
+            || '  Import metadata_id: ' || metadata_id
+        FROM metadata
+        join variables
+            on variables.key='metadata_id'
+            and metadata_id=variables.value
+        WHERE metadata.key = 'commands_imported';
 SQL
 
     historian_sqlite < "$import_sql"
