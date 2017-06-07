@@ -316,7 +316,7 @@ cmd_import() {
         INSERT OR IGNORE INTO history (metadata_id, command_timestamp, command)
         SELECT
             (select value from variables where key='metadata_id') as metadata_id
-            , command_timestamp
+            , datetime(command_timestamp, 'unixepoch') as command_timestamp
             , command
         FROM history_import;
 
