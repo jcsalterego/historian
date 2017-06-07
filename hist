@@ -33,7 +33,10 @@ sql_quote_term() {
 historian_sqlite() {
     # Attempt to normalize sqlite options in case there is
     # some sqliterc imposing global defaults.
-    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}"
+    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" \
+        -noheader \
+        -list \
+        ;
 }
 
 preflight_check() {
