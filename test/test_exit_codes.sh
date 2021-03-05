@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 htest_bare_command_returns_zero_exit_code() {
     sandbox_hist

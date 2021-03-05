@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 htest_search_length() {
     local length=1024
