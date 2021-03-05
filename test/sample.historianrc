@@ -1,0 +1,2 @@
+fake_hostname="the-moon"
+interpreted_var=$(echo {1..10})

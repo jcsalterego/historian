@@ -1,0 +1,5 @@
+hostname=$(hostname)
+username=$(whoami)
+uid=$UID
+uptime=$(uptime)
+uname_a=$(uname -a)
