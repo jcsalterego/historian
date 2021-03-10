@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 htest_import_simple() {
     cat >> $sandbox/.bash_history <<EOF
