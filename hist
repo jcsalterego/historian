@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
 
 VERSION="0.0.2"
-HISTORIAN_SRC=${HISTORIAN_SRC-"${HOME}/.bash_history"}
+HISTORIAN_BASH=${HISTORIAN_BASH-"${HOME}/.bash_history"} \
+HISTORIAN_ZSH=${HISTORIAN_ZSH-"${HOME}/.zsh_history"} \
 HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
-MAGIC="$(echo -e "\x10\x83\xB9\x9F\x34\xB5\x96\x45")" # 0118 999 881 999 119 725 3
-MAGIC_ENUM_QUOTE=1
-
-SEPARATOR=$(echo -e "\x01")
-
-# Other ENV parameters:
-#
-# - ZSH_EXTENDED_HISTORY: if set, parses HISTORIAN_SRC using zsh's
-#   EXTENDED_HISTORY format
+HISTORIAN_BASH_WITH_TIMESTAMPS=${HISTORIAN_BASH_WITH_TIMESTAMPS-0}
+HISTORIAN_RC=${HISTORIAN_RC-"${HOME}/.historianrc"} \
 
 usage() {
-    echo "Usage: hist <subcommand>" >&2
-    echo "subcommands:" >&2
-    echo "  config           show config" >&2
-    echo "  count            count items in history" >&2
-    echo "  import           import to db" >&2
-    echo "  shell            launch sqlite3 shell with db" >&2
-    echo "  search <term>    search for <term>" >&2
-    echo "    /term          search for <term>" >&2
-    echo "  version          show the version" >&2
+    cat >&2 <<- EOF
+Usage: hist <subcommand>
+subcommands:
+config            show config
+count             count items in history
+import            import to db
+shell             launch sqlite3 shell with db
+search <terms...> search for one or more search terms
+    /term           search for <term>
+version           show the version
+EOF
+}
+
+sql_quote_term() {
+    echo "${*//\'/\'\'}"
+}
+
+historian_sqlite() {
+    # Attempt to normalize sqlite options in case there is
+    # some sqliterc imposing global defaults.
+    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" \
+        -noheader \
+        -list \
+        ;
 }
 
 preflight_check() {
@@ -38,26 +47,86 @@ preflight_check() {
     fi
 }
 
-ensure_db_exists() {
-    ( cat <<SQL
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY ASC,
-            command TEXT NOT NULL,
-            timestamp INTEGER
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS
-            history_command_timestamp ON history(command);
-        CREATE VIRTUAL TABLE IF NOT EXISTS
-            history_search USING fts4(id, history, command);
-SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+export_historianrc_variables() {
+    # Get custom-set metadata variables with some variable
+    # enumeration hackery from .historianrc (interpreted as a bash script).
+    #
+    # Execute in subshell to avoid interference with the main script.
+    (
+        # This is kind of like a portable env -0 with diff as env -0 is GNU-only.
+        compgen -v > "$tmp"/vars1
+        source "$HISTORIAN_RC"
+        compgen -v > "$tmp"/vars2
+
+        while IFS= read -r var; do
+            echo -ne "${var}=${!var}"'\0'
+        done < <(comm -13 "$tmp/vars1" "$tmp/vars2")
+    )
+    return $?
 }
 
-get_magic() {
-    local idx=$1
-    let offset_idx=idx+11
-    suffix=$(printf "%02d" ${offset_idx})
-    echo -n "${MAGIC}$(echo -ne "\x${suffix}")"
+insert_import_metadata() {
+    # NB. Metadata set here are passed to the DB as-is.
+    # Be careful with quoting.
+    #
+    # In contrast, variables set in historianrc are
+    # passed in fully quoted.
+    #
+    metadata=(
+        imported_at current_timestamp
+    )
+
+    if [[ -f $HISTORIAN_RC ]]; then
+        local -r vars_path=$tmp/historianrc.vars
+
+        if ! export_historianrc_variables > "$vars_path"; then
+            error "Error evaluating historianrc at ${HISTORIAN_RC}: Exiting."
+            exit 10
+        fi
+
+        while IFS='=' read -r -d '' key val; do
+            metadata+=("$key" "'$(sql_quote_term "$val")'")
+        done < "$vars_path"
+    fi
+
+    echo "INSERT into metadata(metadata_id, key, value)"
+    let end=${#metadata[@]}-1
+    for key_idx in $(seq 0 2 $end); do
+        metadata_key=$(sql_quote_term "${metadata[$key_idx]}")
+        # NB. assumed to be appropriately quoted for SQL.
+        metadata_value=${metadata[$key_idx+1]}
+
+        cat <<-EOF
+            $([[ $key_idx == 0 ]] || echo union all)
+            select
+                value as metadata_id,
+                '${metadata_key}' as key,
+                ${metadata_value} as value
+            from variables where key='metadata_id'
+EOF
+    done
+    echo ';'
+}
+
+ensure_db_exists() {
+    historian_sqlite <<SQL
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY ASC
+            ,metadata_id INTEGER NOT NULL
+            ,command TEXT NOT NULL
+            ,command_timestamp INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS metadata (
+            metadata_id INTEGER NOT NULL
+            ,key TEXT NOT NULL
+            ,value TEXT NOT NULL
+            ,primary key (metadata_id, key)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            history_command_timestamp ON history(command, command_timestamp);
+        CREATE VIRTUAL TABLE IF NOT EXISTS
+            history_search USING fts4(id, history, command, command_timestamp);
+SQL
 }
 
 fail_unless_db_exists() {
@@ -68,133 +137,268 @@ fail_unless_db_exists() {
 }
 
 cmd_config() {
-    echo "version:        ${VERSION}"
-    echo "source_history: ${HISTORIAN_SRC}"
-    echo "db:             ${HISTORIAN_DB}"
-    echo "sqlite3:        ${HISTORIAN_SQLITE3}"
+    cat <<EOF
+version:        ${VERSION}
+bash_history:   ${HISTORIAN_BASH}
+zsh_history:    ${HISTORIAN_ZSH}
+db:             ${HISTORIAN_DB}
+sqlite3:        ${HISTORIAN_SQLITE3}
+EOF
 }
 
 cmd_count() {
-    local args=$@
     preflight_check;
     ensure_db_exists;
 
-    ( cat <<SQL
+    historian_sqlite <<SQL
         SELECT COUNT(*) FROM history;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
+
+
+csv_from_extended_zsh_history() {
+    # See: http://zsh.sourceforge.net/Doc/Release/Options.html#History
+    #
+    # NB. It is not 100% possible to disambiguate zsh lines from each other.
+    # This is because there can be any number of backslashes in the command history.
+    #
+    # However, in practice it is very unlikely for someone to construct
+    # lines like the following for zsh history.
+    # : 1234567890:0;whatever\
+    # : 1234567890:0;whatever\\\\
+    awk '
+    function print_row() {
+        cmd=""
+        for (i=1; i<length(lines); ++i) {
+          line = lines[i];
+          # Strip trailing backslash, add newline.
+          cmd = cmd substr(line, 1, length(line) - 1) RS
+        }
+        cmd = cmd lines[length(lines)]
+
+        # Escape quotes:
+        gsub("\"","\"\"", cmd);
+        # CSV row of form "timestamp,command"
+        print t ",\"" cmd "\"";
+    }
+
+    {
+        if(match($0, /^: ([1-9][0-9]{8,9}):[0-9]+;(.*)$/, a)) {
+            if (t && length(lines) > 0) { print_row(); }
+            delete lines;
+            t=a[1]; line=a[2];
+        } else {
+            line = $0;
+        }
+        lines[length(lines) + 1] = line;
+    }
+
+    END {
+        if (t && length(lines) > 0) { print_row(); }
+    }
+    '
+}
+
+csv_from_bash_history() {
+    # Test if the line looks like a timestamp (e.g. "#1234567890").
+    #
+    # Assume a timestamp is 9 or 10 digits long.
+    # So we only accept entries made between 1973 and 2286.
+    #
+    # This is heuristic by necessity so we do this to try
+    # minimize the number of false positives.
+    #
+    # This should be OK for even the earliest timestamped
+    # readline history file :)
+    #
+    # This is way too slow if implemented in bash so I opted
+    # to use awk instead.
+    # Could be faster still but this is kind of adequate.
+    #
+    # NB. bash has a syntax-check-only mode "bash -n".
+    # This would seem to be the correct option to use here
+    # but even it won't work for everything bash actually
+    # writes to history!
+    #
+    # For example, typing the following line in bash *will*
+    # write it to history, BUT it won't be syntactically valid.
+    #     { echo ' }
+    #
+    awk '
+    function print_row(){
+        # Escape quotes:
+        gsub("\"","\"\"", cmd);
+        # Remove spurious trailing newline
+        sub(/.$/, "", cmd);
+        # CSV row of form "timestamp,command"
+        print t ",\"" cmd "\"";
+    }
+
+    # Match timestamp lines
+    /^#[1-9][0-9]{8,9}$/ {
+        # Print a CSV row IF there is a timestamp associated with it.
+        if (t && cmd) { print_row() }
+        # Remove leading "#" from timestamp:
+        t=substr($0, 2);
+        # No commands seen for this timestamp.
+        cmd="";
+        # Skip to next line.
+        next;
+    }
+    {
+        # Keep adding lines to our command-seen-so-far
+        cmd=cmd $0 RS;
+    }
+    END {
+        # Print any final line if one exists
+        if (t && cmd) { print_row() }
+    }
+    '
+}
+
+if [[ $HISTORIAN_BASH_WITH_TIMESTAMPS = 0 ]]; then
+    csv_from_bash_history() {
+        awk '{
+        # Escape quotes:
+        gsub("\"","\"\"", $0);
+        # CSV row of form "timestamp,command" with zero timestamp.
+        # NB. The timestamp cannot be null for the unique constraints
+        # to work properly.
+        print "0,\"" $0 "\"";
+        }'
+    }
+fi
 
 cmd_import() {
-    local args=$@
-    preflight_check;
-    ensure_db_exists;
+    preflight_check
+    ensure_db_exists
 
-    sanitized_src=$(mktemp)
-    cat ${HISTORIAN_SRC} \
-        | sed -e 's/"/'$(get_magic ${MAGIC_ENUM_QUOTE})'/g' \
-        > "${sanitized_src}" \
-    ;
-    if [ -n "${ZSH_EXTENDED_HISTORY}" ]; then
-        _import_zsh_extended_history;
-    else
-        _import_default;
+    readonly tmp=$(mktemp -d)
+    local -r history_csv_path=${tmp}/history.csv
+    local -r import_sql=${tmp}/import.sql
+    local -r metadata_sql=${tmp}/metadata.sql
+
+    cleanup() { rm -rf "$tmp"; }
+    trap cleanup EXIT
+
+    if [[ -f $HISTORIAN_BASH ]]; then
+        csv_from_bash_history \
+            < "${HISTORIAN_BASH}" \
+            >> "${history_csv_path}"
     fi
-}
 
-_import_default() {
-    ( cat <<SQL
+    if [[ -f $HISTORIAN_ZSH ]]; then
+        csv_from_extended_zsh_history \
+            < "${HISTORIAN_ZSH}" \
+            >> "${history_csv_path}"
+    fi
+
+    if [[ ! -f ${history_csv_path} ]]; then
+        echo "No shell history files found at any of the following locations:"
+        echo "- HISTORIAN_BASH: $HISTORIAN_BASH"
+        echo "- HISTORIAN_ZSH:  $HISTORIAN_ZSH"
+        exit 2
+    fi
+
+    insert_import_metadata > "$metadata_sql"
+
+    cat > "$import_sql" <<- SQL
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
-        INSERT INTO variables(key, value)
-            SELECT 'items', COUNT(*) FROM history;
-        CREATE TEMPORARY TABLE history_import (line TEXT);
-.separator ${SEPARATOR}
-.import ${sanitized_src} history_import
-        UPDATE history_import
-            SET line = REPLACE(line, '$(get_magic ${MAGIC_ENUM_QUOTE})', '"');
-        INSERT OR IGNORE INTO history(command, timestamp)
-            SELECT line, NULL FROM history_import;
-        UPDATE variables
-            SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
-        SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
-SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
-    rm -f ${sanitized_src};
-}
 
-# http://zsh.sourceforge.net/Doc/Release/Options.html#History
-_import_zsh_extended_history() {
-    local tmpdir=$(mktemp -d)
-    tmp_src=${tmpdir}/$(basename $HISTORIAN_SRC)
-    sed -e 's/^: \([0-9][0-9]*\):\([0-9][0-9]*\);/\1'${SEPARATOR}'/g' ${HISTORIAN_SRC} \
-        > ${tmp_src}
-    ( cat <<SQL
-        CREATE TEMPORARY TABLE variables
-            (key TEXT, value INTEGER);
         INSERT INTO variables(key, value)
-            SELECT 'items', COUNT(*) FROM history;
-        CREATE TEMPORARY TABLE history_import (timestamp INTEGER, command TEXT);
-.separator ${SEPARATOR}
-.import ${tmp_src} history_import
-        INSERT OR IGNORE INTO history(timestamp, command)
-            SELECT timestamp, command FROM history_import;
-        UPDATE variables
-            SET value = -1 * value + (SELECT COUNT(*) FROM history); -- lol subtraction
-        SELECT 'Imported ' || value || ' item(s).' FROM variables WHERE key = 'items';
+        SELECT 'items', COUNT(*)
+        FROM history
+        UNION ALL
+        SELECT 'metadata_id', coalesce(max(metadata_id), 0) + 1
+        FROM metadata;
+
+        CREATE TEMPORARY TABLE history_import (
+            command_timestamp INTEGER NOT NULL
+            ,command TEXT NOT NULL
+        );
+
+.mode csv
+.import "${history_csv_path}" history_import
+
+        $(cat "$metadata_sql")
+
+        INSERT OR IGNORE INTO history (metadata_id, command_timestamp, command)
+        SELECT
+            (select value from variables where key='metadata_id') as metadata_id
+            , datetime(command_timestamp, 'unixepoch') as command_timestamp
+            , command
+        FROM history_import;
+
+        insert into metadata (metadata_id, key, value)
+        select
+            (select value from variables where key='metadata_id') as metadata_id
+            , 'commands_imported' as key
+            , (SELECT COUNT(*) FROM history) - value as value
+        from variables where key='items';
+
+.mode ascii
+        SELECT
+            'Imported ' || metadata.value || ' item(s).'
+            || '  Import metadata_id: ' || metadata_id
+        FROM metadata
+        join variables
+            on variables.key='metadata_id'
+            and metadata_id=variables.value
+        WHERE metadata.key = 'commands_imported';
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
-    [ -n "$tmpdir" ] && rm -rf $tmpdir
+
+    historian_sqlite < "$import_sql"
+    echo
 }
 
 cmd_log() {
-    local args=$@
     preflight_check;
     fail_unless_db_exists;
 
-    ( cat <<SQL
+    historian_sqlite <<SQL | less
 .separator "\\n\\t"
         SELECT id, command FROM history ORDER BY id DESC;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" | less;
 }
 
 cmd_search() {
     preflight_check;
     ensure_db_exists;
 
-    local args=$@
-    _search "$args"
-}
+    local -r args=("$@")
+    search_terms() {
+        for term in "${args[@]}"; do
+            echo "AND command LIKE '%$(sql_quote_term "$term")%'"
+        done
+    }
 
-cmd_search_slash() {
-    preflight_check;
-    ensure_db_exists;
+    format_results() {
+        # Ensure special characters like \n and \t are interpreted for display.
+        echo -e "$(cat)"
+    }
 
-    local args=$@
-    term="$(echo "$args" | sed -e 's/^.//g')";
-    _search "$term"
-}
-
-_search() {
-    local args=$@
-    ( cat <<SQL
-.separator "\\n\\t"
-        SELECT id, command
+    # Format the output in SQL for performance reasons.
+    # Doing this in bash with a "read" loop will slow this down a lot.
+    historian_sqlite <<- SQL | format_results
+.mode list
+        SELECT
+            'id:' || id
+            || ' at ' || command_timestamp
+            || '\n\t' || replace(command, '\n', '\n\t')
         FROM history
-        WHERE command LIKE '%${args}%'
+        WHERE 1
+        $(search_terms)
         ORDER BY id DESC;
 SQL
-    ) | "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
 }
 
 cmd_shell() {
-    local args=$@
     preflight_check;
     fail_unless_db_exists;
 
     echo "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}" >&2
-    "${HISTORIAN_SQLITE3}" "${HISTORIAN_DB}";
+    historian_sqlite
 }
 
 cmd_version() {
@@ -202,36 +406,21 @@ cmd_version() {
 }
 
 main() {
-    local cmd=$1
+    local -r cmd=$1
     shift
     case $cmd in
-    config)
-        cmd_config $@
-        ;;
-    count)
-        cmd_count $@
-        ;;
-    import)
-        cmd_import $@
-        ;;
-    log)
-        cmd_log $@
-        ;;
-    search)
-        cmd_search $@
-        ;;
-    shell)
-        cmd_shell $@
-        ;;
-    version)
-        cmd_version $@
-        ;;
-    "")
+    "" | "-h" | "--help")
         usage
         ;;
+    /*)
+        # Strip trailing slash and proceed normally.
+        args=("${cmd:1}" $@)
+        cmd_search "${args[@]}"
+        ;;
     *)
-        if [ -n "$(echo "$cmd" | grep -E '^/')" ]; then
-            cmd_search_slash $cmd $@
+        subcommand=cmd_${cmd}
+        if typeset -rF "$subcommand"; then
+            "$subcommand" "$@"
         else
             usage
             exit 1
@@ -240,4 +429,4 @@ main() {
     esac
 }
 
-main $@
+main "$@"

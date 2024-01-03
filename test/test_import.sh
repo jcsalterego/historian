@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+typeset sandbox
 
 htest_import_simple() {
-    cat >> $sandbox/.bash_history <<EOF
+    cat >> "$sandbox"/.bash_history <<EOF
 foo
 bar
 baz
@@ -14,7 +15,7 @@ EOF
 }
 
 htest_import_will_dedupe() {
-    cat >> $sandbox/.bash_history <<EOF
+    cat >> "$sandbox"/.bash_history <<EOF
 foo
 bar
 baz
@@ -29,7 +30,7 @@ EOF
 }
 
 htest_import_handles_funny_characters() {
-    cat >> $sandbox/.bash_history <<EOF
+    cat >> "$sandbox"/.bash_history <<EOF
 echo \`ls\`
 ls ./\$(hi)
 foo \\\\bar\\\\baz
@@ -42,13 +43,13 @@ EOF
     assert_equal 4 "${row_count}" "rows imported by simple bash_history"
 
     sandbox_sql 'SELECT command FROM HISTORY ORDER BY id ASC;' \
-        > $sandbox/exported_commands.txt
-    diff $sandbox/.bash_history $sandbox/exported_commands.txt
+        > "$sandbox"/exported_commands.txt
+    diff "$sandbox"/.bash_history "$sandbox"/exported_commands.txt
     assert_equal 0 $? "exported commands should match"
 }
 
 htest_import_run_twice_will_do_nothing_the_second_time() {
-    cat >> $sandbox/.bash_history <<EOF
+    cat >> "$sandbox"/.bash_history <<EOF
 foo
 bar
 baz
@@ -66,7 +67,7 @@ EOF
 }
 
 htest_import_imbalanced_quotes() {
-    cat >> $sandbox/.bash_history <<EOF
+    cat >> "$sandbox"/.bash_history <<EOF
 foo
 "bar
 baz"
@@ -76,45 +77,49 @@ EOF
 
     sandbox_hist import
 
-    local tmp=$(mktemp)
-    sandbox_sql 'SELECT command FROM history ORDER BY id ASC;' > $tmp
-    diff $tmp $sandbox/.bash_history
+    local -r tmp=$(mktemp)
+    sandbox_sql 'SELECT command FROM history ORDER BY id ASC;' > "$tmp"
+    diff "$tmp" "$sandbox"/.bash_history
     assert_equal 0 $?
-    rm -f $tmp
+    rm -f "$tmp"
 }
 
 htest_import_zsh_extended_history_parses_correctly() {
-    cat >> $sandbox/.bash_history <<EOF
-: 1492369835:0;hist import
-: 1492369844:0;hist /hist import
-: 1492369861:4;hist shell
-: 1492369868:0;hist version
-: 1492369908:0;hist /hist | wc -l
-: 1492370096:30;history
-: 1492370103:0;man history
-: 1492370245:0;history-stat
-: 1492370604:50;vi $HISTFILE
-: 1492370674:0;tail $HISTFILEfoo
+    cp "$PWD"/sample.zsh_history "$sandbox"/.zsh_history
+    expected_output=$PWD/sample.zsh_history.expected_output
+
+    sandbox_hist_with_output import
+
+    sandbox_sql > "$sandbox"/actual_output.psv "
+    SELECT command_timestamp, command
+    FROM history
+    ORDER by command_timestamp;
+    "
+
+    diff "$expected_output" "$sandbox"/actual_output.psv
+    assert_equal 0 $? "rows imported with from zsh_history set should match"
+}
+
+htest_import_historianrc_variables_get_imported() {
+    cp "$PWD"/sample.historianrc "$sandbox"/.historianrc
+    seq 15 > "$sandbox"/.bash_history
+    sandbox_hist import
+    cat > "$sandbox"/expected_output.psv <<EOF
+1|commands_imported|15
+1|fake_hostname|the-moon
+1|interpreted_var|1 2 3 4 5 6 7 8 9 10
 EOF
+    sandbox_sql > "$sandbox"/actual_output.psv "
+    SELECT metadata_id, key, value
+    FROM metadata
+    WHERE key <> 'imported_at'
+    ORDER by metadata_id, key;
+    "
+    diff "$sandbox"/expected_output.psv "$sandbox"/actual_output.psv
+    assert_equal 0 $? "variables from .historianrc set should match"
+}
 
-    cat >> $sandbox/expected_commands.psv <<EOF
-1492369835|hist import
-1492369844|hist /hist import
-1492369861|hist shell
-1492369868|hist version
-1492369908|hist /hist | wc -l
-1492370096|history
-1492370103|man history
-1492370245|history-stat
-1492370604|vi $HISTFILE
-1492370674|tail $HISTFILEfoo
-EOF
-
-    ZSH_EXTENDED_HISTORY=1 \
-        sandbox_hist import
-
-    sandbox_sql "SELECT timestamp, command FROM history;" \
-        > $sandbox/actual_commands.psv;
-    diff $sandbox/expected_commands.psv $sandbox/actual_commands.psv;
-    assert_equal 0 $? "rows imported with ZSH_EXTENDED_HISTORY set should match"
+htest_import_fails_with_no_history_files() {
+    sandbox_hist import
+    assert_equal 2 $? "hist import should fail if no history input is found"
 }
