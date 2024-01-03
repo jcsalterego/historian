@@ -22,6 +22,16 @@ version           show the version
 EOF
 }
 
+awk() {
+    if [ -e /opt/local/bin/gawk ]; then
+      /opt/local/bin/gawk "$@"
+    elif [ -e /usr/local/bin/gawk ]; then
+      /usr/local/bin/gawk "$@"
+    else
+      /usr/bin/env awk "$@"
+    fi
+}
+
 sql_quote_term() {
     echo "${*//\'/\'\'}"
 }

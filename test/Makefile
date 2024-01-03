@@ -2,9 +2,9 @@ all: env test
 env:
 	uname -a
 	@echo
-	sqlite3 --version
+	@sqlite3 --version
 	@echo
-	awk --version
+	@which gawk > /dev/null && gawk --version || awk --version
 	@echo
 test:
 	@./run.sh

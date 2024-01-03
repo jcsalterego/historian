@@ -98,3 +98,14 @@ finish_tests() {
         exit 1
     fi
 }
+
+awk() {
+    if [ -e /opt/local/bin/gawk ]; then
+      /opt/local/bin/gawk "$@"
+    elif [ -e /usr/local/bin/gawk ]; then
+      /usr/local/bin/gawk "$@"
+    else
+      /usr/bin/env awk "$@"
+    fi
+}
+export awk

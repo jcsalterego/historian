@@ -1,0 +1,27 @@
+---
+name: CI
+on: [push, pull_request]
+
+jobs:
+  make_test:
+    name: Original Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-13
+          # - macos-12
+          # - macos-11
+    steps:
+      - name: Check out the codebase.
+        uses: actions/checkout@v2
+      - name: incasebrew
+        run: |
+          if which brew > /dev/null; then
+            brew install gawk
+            which gawk
+          fi
+      - name: oldtest
+        run: |
+          make test
