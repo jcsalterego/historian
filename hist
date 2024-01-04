@@ -19,6 +19,8 @@ shell             launch sqlite3 shell with db
 search <terms...> search for one or more search terms
     /term           search for <term>
 version           show the version
+export            export in .bash_history format
+zshexport         export in .zsh_history  format
 EOF
 }
 
@@ -413,6 +415,25 @@ cmd_shell() {
 
 cmd_version() {
     echo "historian version: ${VERSION}"
+}
+
+cmd_zshexport() {
+    preflight_check;
+    fail_unless_db_exists;
+
+    historian_sqlite <<SQL | sed -e 's/^/: /;s/\t/:0\;/'
+.separator "\\t"
+        SELECT strftime('%s',command_timestamp), command FROM history ORDER BY id ASC;
+SQL
+}
+
+cmd_export() {
+    preflight_check;
+    fail_unless_db_exists;
+
+    historian_sqlite <<SQL
+        SELECT command FROM history ORDER BY id ASC;
+SQL
 }
 
 main() {
