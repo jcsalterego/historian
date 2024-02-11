@@ -7,7 +7,6 @@ HISTORIAN_DB=${HISTORIAN_DB-"${HOME}/.historian.db"}
 HISTORIAN_SQLITE3=${HISTORIAN_SQLITE3-"$(which sqlite3)"}
 HISTORIAN_BASH_WITH_TIMESTAMPS=${HISTORIAN_BASH_WITH_TIMESTAMPS-0}
 HISTORIAN_RC=${HISTORIAN_RC-"${HOME}/.historianrc"} \
-export LANG=C
 
 usage() {
     cat >&2 <<- EOF
@@ -26,13 +25,13 @@ EOF
 }
 
 awk() {
-    if [ -e /opt/local/bin/gawk ]; then
-      /opt/local/bin/gawk "$@"
-    elif [ -e /usr/local/bin/gawk ]; then
-      /usr/local/bin/gawk "$@"
-    else
-      /usr/bin/env awk "$@"
-    fi
+ if [ -e /opt/local/bin/gawk ]; then
+   LANG=C /opt/local/bin/gawk "$@"
+ elif [ -e /usr/local/bin/gawk ]; then
+   LANG=C /usr/local/bin/gawk "$@"
+ else
+   LANG=C /usr/bin/env awk "$@"
+ fi
 }
 
 sql_quote_term() {
@@ -102,7 +101,7 @@ insert_import_metadata() {
         done < "$vars_path"
     fi
 
-    echo "INSERT into metadata(metadata_id, key, value)"
+    echo "INSERT OR IGNORE INTO metadata(metadata_id, key, value)"
     let end=${#metadata[@]}-1
     for key_idx in $(seq 0 2 $end); do
         metadata_key=$(sql_quote_term "${metadata[$key_idx]}")
@@ -316,6 +315,10 @@ cmd_import() {
     insert_import_metadata > "$metadata_sql"
 
     cat > "$import_sql" <<- SQL
+.output /dev/null
+        PRAGMA busy_timeout = 200;
+.output stdout
+
         CREATE TEMPORARY TABLE variables
             (key TEXT, value INTEGER);
 
@@ -343,7 +346,7 @@ cmd_import() {
             , command
         FROM history_import;
 
-        insert into metadata (metadata_id, key, value)
+        INSERT OR IGNORE INTO metadata (metadata_id, key, value)
         select
             (select value from variables where key='metadata_id') as metadata_id
             , 'commands_imported' as key
